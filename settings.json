@@ -1,0 +1,42 @@
+{
+  "destination_root": "/Volumes/DIT_RAID/ShowName_Sync",
+  "sources": [
+    {
+      "name": "Camera A",
+      "ip_address": "192.168.10.101",
+      "mount_path": "/Volumes/CAMERA_A",
+      "type": "camera"
+    },
+    {
+      "name": "Camera B",
+      "ip_address": "192.168.10.102",
+      "mount_path": "/Volumes/CAMERA_B",
+      "type": "camera"
+    },
+    {
+      "name": "ATEM ISO",
+      "ip_address": "192.168.10.150",
+      "mount_path": "/Volumes/ATEM_ISO",
+      "type": "atem_iso"
+    }
+  ],
+  "sync": {
+    "last_24h_default": true,
+    "active_file_probe_seconds": 2,
+    "active_file_min_age_seconds": 15,
+    "hash_algorithm": "md5",
+    "retry_on_checksum_fail": 1
+  },
+  "rsync": {
+    "binary": "rsync",
+    "flags": ["-a", "--partial", "--inplace"]
+  },
+  "ui": {
+    "refresh_seconds": 2
+  },
+  "updates": {
+    "github_repo": "",
+    "asset_name_contains": "DIT Media Manager",
+    "install_dir": "~/Applications"
+  }
+}

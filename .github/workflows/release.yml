@@ -1,0 +1,54 @@
+name: Build macOS release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Python + Tk
+        run: |
+          brew update
+          brew install python@3.14 python-tk@3.14
+          echo "$(brew --prefix python@3.14)/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Python
+        run: |
+          python3 --version
+          python3 -c "import tkinter as tk; print('TK_OK', tk.TkVersion)"
+
+      - name: Build apps
+        run: |
+          chmod +x build_app.sh build_launcher.sh
+          ./build_app.sh
+          ./build_launcher.sh
+
+      - name: Package artifacts
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          dit_manager="DIT-Media-Manager-macOS-${RUNNER_ARCH}-${TAG}.zip"
+          dit_launcher="DIT-Media-Launcher-macOS-${RUNNER_ARCH}-${TAG}.zip"
+
+          ditto -c -k --sequesterRsrc --keepParent "dist/DIT Media Manager.app" "$dit_manager"
+          ditto -c -k --sequesterRsrc --keepParent "dist/DIT Media Launcher.app" "$dit_launcher"
+
+          echo "MANAGER_ZIP=$dit_manager" >> "$GITHUB_ENV"
+          echo "LAUNCHER_ZIP=$dit_launcher" >> "$GITHUB_ENV"
+
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.MANAGER_ZIP }}
+            ${{ env.LAUNCHER_ZIP }}
+          generate_release_notes: true
