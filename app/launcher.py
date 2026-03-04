@@ -15,6 +15,7 @@ from typing import Any, Optional
 from app.utils import resource_path
 
 APP_BUNDLE_NAME = "DIT Media Manager.app"
+DEFAULT_GITHUB_REPO = "pilatusvrtcl/dit-media-manager"
 STATE_DIR = Path.home() / "Library" / "Application Support" / "DIT Media Launcher"
 STATE_FILE = STATE_DIR / "state.json"
 
@@ -212,18 +213,9 @@ class LauncherWindow:
         try:
             settings = load_settings()
             update_settings = settings.get("updates", {})
-            github_repo = str(update_settings.get("github_repo", "")).strip()
+            github_repo = str(update_settings.get("github_repo", "")).strip() or DEFAULT_GITHUB_REPO
             asset_name_contains = str(update_settings.get("asset_name_contains", "DIT Media Manager")).strip()
             install_dir = str(update_settings.get("install_dir", str(Path.home() / "Applications")))
-
-            if not github_repo:
-                self._set_status("No GitHub repo configured; launching installed app.")
-                installed = find_installed_app(install_dir)
-                if not installed:
-                    raise RuntimeError("No installed app found and updates.github_repo is empty.")
-                launch_app(installed)
-                self.root.after(600, self.root.destroy)
-                return
 
             self._set_status("Checking latest release on GitHub...")
             release = fetch_latest_release(github_repo)
