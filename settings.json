@@ -35,7 +35,7 @@
     "refresh_seconds": 2
   },
   "updates": {
-    "github_repo": "",
+    "github_repo": "pilatusvrtcl/dit-media-manager",
     "asset_name_contains": "DIT Media Manager",
     "install_dir": "~/Applications"
   }
