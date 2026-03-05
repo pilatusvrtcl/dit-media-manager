@@ -156,7 +156,29 @@ def install_downloaded_app(zip_url: str, install_dir: str) -> Path:
 
 
 def launch_app(app_path: Path) -> None:
-    subprocess.Popen(["open", str(app_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not app_path.exists():
+        raise RuntimeError(f"App not found at: {app_path}")
+
+    subprocess.run(
+        ["xattr", "-dr", "com.apple.quarantine", str(app_path)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+
+    proc = subprocess.run(
+        ["open", str(app_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        error_detail = (proc.stderr or proc.stdout or "Unknown launch error").strip()
+        raise RuntimeError(
+            "Failed to launch DIT Media Manager. "
+            "Try opening it once manually from Finder (Right-click > Open). "
+            f"Details: {error_detail}"
+        )
 
 
 class LauncherWindow:
