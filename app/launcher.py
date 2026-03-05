@@ -8,7 +8,6 @@ import tempfile
 import tkinter as tk
 import tkinter.messagebox as mbox
 import urllib.request
-import zipfile
 import re
 from pathlib import Path
 from typing import Any, Optional
@@ -139,8 +138,17 @@ def install_downloaded_app(zip_url: str, install_dir: str) -> Path:
 
         urllib.request.urlretrieve(zip_url, zip_path)
 
-        with zipfile.ZipFile(zip_path, "r") as archive:
-            archive.extractall(extract_dir)
+        extract_proc = subprocess.run(
+            ["ditto", "-x", "-k", str(zip_path), str(extract_dir)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if extract_proc.returncode != 0:
+            raise RuntimeError(
+                "Failed to unpack downloaded release archive. "
+                f"Details: {(extract_proc.stderr or extract_proc.stdout or 'ditto failed').strip()}"
+            )
 
         app_candidates = list(extract_dir.rglob(APP_BUNDLE_NAME))
         if not app_candidates:
@@ -150,7 +158,17 @@ def install_downloaded_app(zip_url: str, install_dir: str) -> Path:
         if target_app.exists():
             shutil.rmtree(target_app)
 
-        shutil.copytree(source_app, target_app)
+        copy_proc = subprocess.run(
+            ["ditto", str(source_app), str(target_app)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if copy_proc.returncode != 0:
+            raise RuntimeError(
+                "Failed to install app bundle. "
+                f"Details: {(copy_proc.stderr or copy_proc.stdout or 'ditto failed').strip()}"
+            )
 
     return target_app
 
