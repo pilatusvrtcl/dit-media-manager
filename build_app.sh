@@ -30,10 +30,17 @@ if [[ -f "assets/app_icon.icns" ]]; then
   ICON_ARGS+=(--icon "assets/app_icon.icns")
 fi
 
-python -m PyInstaller --noconfirm --clean --windowed \
-  --name "DIT Media Manager" \
-  --add-data "settings.json:." \
-  "${ICON_ARGS[@]}" \
-  app/main.py
+PYI_CMD=(
+  python -m PyInstaller --noconfirm --clean --windowed
+  --name "DIT Media Manager"
+  --add-data "settings.json:."
+)
+
+if [[ -f "assets/app_icon.icns" ]]; then
+  PYI_CMD+=(--icon "assets/app_icon.icns")
+fi
+
+PYI_CMD+=(app/main.py)
+"${PYI_CMD[@]}"
 
 echo "Build complete: dist/DIT Media Manager.app"
