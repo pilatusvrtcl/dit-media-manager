@@ -12,6 +12,10 @@ from typing import Optional
 from .models import AppConfig, parse_config
 
 
+USER_CONFIG_DIR = Path.home() / "Library" / "Application Support" / "DIT Media Manager"
+USER_CONFIG_FILE = USER_CONFIG_DIR / "settings.user.json"
+
+
 def resource_path(relative_path: str) -> Path:
     base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
     return base_path / relative_path
@@ -25,7 +29,50 @@ def load_config(config_file: Optional[Path] = None) -> AppConfig:
             candidate = bundled
     with candidate.open("r", encoding="utf-8") as handle:
         raw = json.load(handle)
-    return parse_config(raw)
+
+    merged = raw
+    if USER_CONFIG_FILE.exists():
+        try:
+            with USER_CONFIG_FILE.open("r", encoding="utf-8") as handle:
+                user_raw = json.load(handle)
+            merged = _deep_merge(raw, user_raw)
+        except Exception:
+            merged = raw
+
+    return parse_config(merged)
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    merged = dict(base)
+    for key, value in override.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def get_user_config_file() -> Path:
+    return USER_CONFIG_FILE
+
+
+def save_source_ip_overrides(config: AppConfig, ip_by_source: dict[str, str]) -> Path:
+    USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "sources": [
+            {
+                "name": source.name,
+                "mount_path": str(source.mount_path),
+                "type": source.source_type,
+                "subfolder": source.subfolder,
+                "ip_address": ip_by_source.get(source.name, source.ip_address),
+            }
+            for source in config.sources
+        ]
+    }
+    with USER_CONFIG_FILE.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+    return USER_CONFIG_FILE
 
 
 def hash_file(path: Path, algorithm: str = "md5", chunk_size: int = 2 * 1024 * 1024) -> str:

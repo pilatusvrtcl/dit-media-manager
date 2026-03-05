@@ -4,11 +4,13 @@ import queue
 import threading
 import time
 import tkinter as tk
+import tkinter.messagebox as mbox
 from tkinter import ttk
 
 from .models import AppConfig, FileResult, format_size
 from .sync_engine import SyncEngine, build_summary_text
-from .utils import is_host_reachable, is_mount_available
+from .utils import get_user_config_file, is_host_reachable, is_mount_available, save_source_ip_overrides
+from .version import __version__
 
 
 class RoundedCard(tk.Canvas):
@@ -74,6 +76,7 @@ class AppGUI:
 
         self.status_labels: dict[str, tk.StringVar] = {}
         self.last_seen_labels: dict[str, tk.StringVar] = {}
+        self.ip_vars: dict[str, tk.StringVar] = {}
         self.rows: list[FileResult] = []
         self.event_queue: queue.Queue[tuple[str, object]] = queue.Queue()
 
@@ -99,6 +102,11 @@ class AppGUI:
         style.configure("Info.TLabel", background="#111111", foreground="#FFFFFF", font=("SF Pro", 10))
         style.configure("DashHeader.TLabel", background="#1A1A1A", foreground="#FFCC33", font=("SF Pro", 10, "bold"))
         style.configure("DashValue.TLabel", background="#1A1A1A", foreground="#FFFFFF", font=("SF Pro", 10))
+        style.configure("ConfigHeader.TLabel", background="#111111", foreground="#FFCC33", font=("SF Pro", 12, "bold"))
+        style.configure("ConfigHint.TLabel", background="#111111", foreground="#D8D8D8", font=("SF Pro", 10))
+        style.configure("Version.TLabel", background="#111111", foreground="#8E8E8E", font=("SF Pro", 9))
+        style.configure("TNotebook", background="#111111", borderwidth=0)
+        style.configure("TNotebook.Tab", font=("SF Pro", 10, "bold"), padding=(12, 8))
         style.configure("Accent.Horizontal.TProgressbar", troughcolor="#2A2A2A", background="#FFCC33", bordercolor="#2A2A2A", lightcolor="#FFCC33", darkcolor="#FFCC33")
         style.configure("TCheckbutton", background="#111111", foreground="#FFFFFF")
         style.map("TCheckbutton", background=[("active", "#111111")], foreground=[("disabled", "#777777")])
@@ -139,7 +147,21 @@ class AppGUI:
         )
         subtitle.pack(anchor=tk.W, pady=(2, 10))
 
-        controls = ttk.Frame(outer, style="App.TFrame")
+        notebook = ttk.Notebook(outer)
+        notebook.pack(fill=tk.BOTH, expand=True)
+
+        sync_tab = ttk.Frame(notebook, style="App.TFrame")
+        config_tab = ttk.Frame(notebook, style="App.TFrame")
+        notebook.add(sync_tab, text="Sync")
+        notebook.add(config_tab, text="Config")
+
+        self._build_sync_tab(sync_tab)
+        self._build_config_tab(config_tab)
+
+        ttk.Label(outer, text=f"v{__version__}", style="Version.TLabel").pack(anchor=tk.E, pady=(8, 0))
+
+    def _build_sync_tab(self, parent: ttk.Frame) -> None:
+        controls = ttk.Frame(parent, style="App.TFrame")
         controls.pack(fill=tk.X)
 
         self.last24_toggle = ttk.Checkbutton(
@@ -173,13 +195,13 @@ class AppGUI:
         ttk.Label(controls, textvariable=self.summary_var, style="Summary.TLabel").pack(side=tk.RIGHT)
 
         destination_label = ttk.Label(
-            outer,
+            parent,
             text=f"Destination: {self.config.destination_root}",
             style="Info.TLabel",
         )
         destination_label.pack(anchor=tk.W, pady=(8, 10))
 
-        status_card = RoundedCard(outer, card_color="#1A1A1A", radius=24, padding=14)
+        status_card = RoundedCard(parent, card_color="#1A1A1A", radius=24, padding=14)
         status_card.pack(fill=tk.X, pady=(0, 10))
         status_box = status_card.inner
 
@@ -207,7 +229,7 @@ class AppGUI:
             ttk.Label(status_box, textvariable=seen_var, style="DashValue.TLabel").grid(row=row, column=4, sticky=tk.W, pady=2)
 
         columns = ("file", "source", "size", "status")
-        results_card = RoundedCard(outer, card_color="#1A1A1A", radius=24, padding=14)
+        results_card = RoundedCard(parent, card_color="#1A1A1A", radius=24, padding=14)
         results_card.pack(fill=tk.BOTH, expand=True)
         results_box = results_card.inner
 
@@ -232,6 +254,73 @@ class AppGUI:
         yscroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.root.after(50, lambda: status_card.configure(height=max(170, 72 + (len(self.config.sources) * 28))))
+
+    def _build_config_tab(self, parent: ttk.Frame) -> None:
+        frame = ttk.Frame(parent, style="App.TFrame", padding=(0, 4, 0, 0))
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="Device IP Configuration", style="ConfigHeader.TLabel").pack(anchor=tk.W, pady=(0, 6))
+        ttk.Label(
+            frame,
+            text="These values are saved in your user profile and persist across app updates.",
+            style="ConfigHint.TLabel",
+        ).pack(anchor=tk.W, pady=(0, 12))
+
+        card = RoundedCard(frame, card_color="#1A1A1A", radius=24, padding=14)
+        card.pack(fill=tk.X)
+        body = card.inner
+
+        for index, source in enumerate(self.config.sources):
+            ttk.Label(body, text=source.name, style="DashValue.TLabel").grid(row=index, column=0, sticky=tk.W, padx=(0, 12), pady=6)
+            ip_var = tk.StringVar(value=source.ip_address)
+            self.ip_vars[source.name] = ip_var
+            entry = tk.Entry(
+                body,
+                textvariable=ip_var,
+                bg="#111111",
+                fg="#FFFFFF",
+                insertbackground="#FFCC33",
+                highlightthickness=1,
+                highlightbackground="#2C2C2C",
+                highlightcolor="#FFCC33",
+                relief="flat",
+                bd=0,
+                width=30,
+                font=("SF Pro", 11),
+            )
+            entry.grid(row=index, column=1, sticky=tk.W, pady=6)
+
+        actions = ttk.Frame(frame, style="App.TFrame")
+        actions.pack(fill=tk.X, pady=(12, 0))
+
+        tk.Button(
+            actions,
+            text="Save IPs",
+            command=self._save_ip_settings,
+            bg="#FFCC33",
+            fg="#111111",
+            activebackground="#FFD966",
+            activeforeground="#111111",
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            padx=16,
+            pady=7,
+            font=("SF Pro", 10, "bold"),
+            cursor="hand2",
+        ).pack(side=tk.LEFT)
+
+    def _save_ip_settings(self) -> None:
+        ip_by_source = {name: var.get().strip() for name, var in self.ip_vars.items()}
+        saved_path = save_source_ip_overrides(self.config, ip_by_source)
+
+        for source in self.config.sources:
+            source.ip_address = ip_by_source.get(source.name, source.ip_address)
+
+        mbox.showinfo(
+            "Config Saved",
+            f"IP settings saved to:\n{saved_path}\n\nThey will persist across newer app versions.",
+        )
 
     def _refresh_connectivity(self) -> None:
         now = time.strftime("%H:%M:%S")
