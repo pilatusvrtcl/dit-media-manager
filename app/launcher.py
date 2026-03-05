@@ -9,6 +9,7 @@ import tkinter as tk
 import tkinter.messagebox as mbox
 import urllib.request
 import zipfile
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -63,11 +64,37 @@ def pick_release_asset(release: dict[str, Any], name_contains: str) -> Optional[
     assets = release.get("assets", [])
     machine = platform.machine().lower()
 
-    zip_assets = [asset for asset in assets if str(asset.get("name", "")).lower().endswith(".zip")]
-    if name_contains:
-        filtered = [asset for asset in zip_assets if name_contains.lower() in str(asset.get("name", "")).lower()]
+    def normalize_token(value: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", value.lower())
+
+    zip_assets = [
+        asset
+        for asset in assets
+        if str(asset.get("name", "")).lower().endswith(".zip")
+        and "source code" not in str(asset.get("name", "")).lower()
+    ]
+
+    if not zip_assets:
+        return None
+
+    normalized_filter = normalize_token(name_contains) if name_contains else ""
+    if normalized_filter:
+        filtered = [
+            asset
+            for asset in zip_assets
+            if normalized_filter in normalize_token(str(asset.get("name", "")))
+        ]
         if filtered:
             zip_assets = filtered
+
+    manager_keyword = normalize_token("DIT Media Manager")
+    manager_filtered = [
+        asset
+        for asset in zip_assets
+        if manager_keyword in normalize_token(str(asset.get("name", "")))
+    ]
+    if manager_filtered:
+        zip_assets = manager_filtered
 
     if not zip_assets:
         return None
