@@ -5,6 +5,7 @@ import platform
 import shutil
 import subprocess
 import tempfile
+import time
 import tkinter as tk
 import tkinter.messagebox as mbox
 import urllib.request
@@ -177,6 +178,8 @@ def launch_app(app_path: Path) -> None:
     if not app_path.exists():
         raise RuntimeError(f"App not found at: {app_path}")
 
+    executable_path = app_path / "Contents" / "MacOS" / "DIT Media Manager"
+
     subprocess.run(
         ["xattr", "-dr", "com.apple.quarantine", str(app_path)],
         stdout=subprocess.DEVNULL,
@@ -197,6 +200,34 @@ def launch_app(app_path: Path) -> None:
             "Try opening it once manually from Finder (Right-click > Open). "
             f"Details: {error_detail}"
         )
+
+    if _is_manager_running(executable_path):
+        return
+
+    subprocess.Popen([str(executable_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if _is_manager_running(executable_path):
+        return
+
+    raise RuntimeError(
+        "DIT Media Manager launch did not stay running. "
+        "Try opening it once manually from Finder (Right-click > Open), then retry launcher."
+    )
+
+
+def _is_manager_running(executable_path: Path, timeout_seconds: float = 6.0) -> bool:
+    deadline = time.time() + timeout_seconds
+    pattern = str(executable_path)
+    while time.time() < deadline:
+        proc = subprocess.run(
+            ["pgrep", "-f", pattern],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return True
+        time.sleep(0.35)
+    return False
 
 
 class LauncherWindow:
