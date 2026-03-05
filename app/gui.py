@@ -113,16 +113,6 @@ class AppGUI:
             padding=[("selected", (14, 8)), ("!selected", (14, 8))],
             expand=[("selected", (0, 0, 0, 0)), ("!selected", (0, 0, 0, 0))],
         )
-
-    def _set_window_icon(self) -> None:
-        try:
-            icon_path = resource_path("assets/app_icon.png")
-            if icon_path.exists():
-                icon = tk.PhotoImage(file=str(icon_path))
-                self.root.iconphoto(True, icon)
-                self.root._app_icon_ref = icon  # type: ignore[attr-defined]
-        except Exception:
-            pass
         style.configure("Accent.Horizontal.TProgressbar", troughcolor="#2A2A2A", background="#FFCC33", bordercolor="#2A2A2A", lightcolor="#FFCC33", darkcolor="#FFCC33")
         style.configure("TCheckbutton", background="#111111", foreground="#FFFFFF")
         style.map("TCheckbutton", background=[("active", "#111111")], foreground=[("disabled", "#777777")])
@@ -149,6 +139,16 @@ class AppGUI:
             background=[("selected", "#2E2E2E")],
             foreground=[("selected", "#FFCC33")],
         )
+
+    def _set_window_icon(self) -> None:
+        try:
+            icon_path = resource_path("assets/app_icon.png")
+            if icon_path.exists():
+                icon = tk.PhotoImage(file=str(icon_path))
+                self.root.iconphoto(True, icon)
+                self.root._app_icon_ref = icon  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     def _build_layout(self) -> None:
         outer = ttk.Frame(self.root, padding=14, style="App.TFrame")

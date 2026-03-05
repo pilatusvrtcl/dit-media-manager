@@ -108,6 +108,21 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
+### Hotfix release now (`v1.0.9`)
+
+Use this exact sequence to publish the fixed build (regression from `v1.0.6` is resolved):
+
+```bash
+git add app/gui.py app/launcher.py app/version.py README.md
+git commit -m "Fix manager startup crash and release v1.0.9"
+git push origin main
+
+git tag v1.0.9
+git push origin v1.0.9
+```
+
+After GitHub Actions attaches release assets, run `DIT Media Launcher.app` again. It will detect `v1.0.9`, download it, and replace the broken `v1.0.8` install.
+
 Set this in `settings.json` for launcher updates:
 
 ```json

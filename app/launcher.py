@@ -201,11 +201,11 @@ def launch_app(app_path: Path) -> None:
             f"Details: {error_detail}"
         )
 
-    if _is_manager_running(executable_path):
+    if _is_manager_running(executable_path, stable_seconds=1.5):
         return
 
     subprocess.Popen([str(executable_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if _is_manager_running(executable_path):
+    if _is_manager_running(executable_path, stable_seconds=1.5):
         return
 
     raise RuntimeError(
@@ -214,7 +214,7 @@ def launch_app(app_path: Path) -> None:
     )
 
 
-def _is_manager_running(executable_path: Path, timeout_seconds: float = 6.0) -> bool:
+def _is_manager_running(executable_path: Path, timeout_seconds: float = 6.0, stable_seconds: float = 0.0) -> bool:
     deadline = time.time() + timeout_seconds
     pattern = str(executable_path)
     while time.time() < deadline:
@@ -225,6 +225,16 @@ def _is_manager_running(executable_path: Path, timeout_seconds: float = 6.0) -> 
             check=False,
         )
         if proc.returncode == 0:
+            if stable_seconds > 0:
+                time.sleep(stable_seconds)
+                confirm = subprocess.run(
+                    ["pgrep", "-f", pattern],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                if confirm.returncode != 0:
+                    continue
             return True
         time.sleep(0.35)
     return False
