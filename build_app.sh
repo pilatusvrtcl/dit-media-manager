@@ -25,9 +25,15 @@ except Exception as exc:
   sys.exit(1)
 PY
 
+ICON_ARGS=()
+if [[ -f "assets/app_icon.icns" ]]; then
+  ICON_ARGS+=(--icon "assets/app_icon.icns")
+fi
+
 python -m PyInstaller --noconfirm --clean --windowed \
   --name "DIT Media Manager" \
   --add-data "settings.json:." \
+  "${ICON_ARGS[@]}" \
   app/main.py
 
 echo "Build complete: dist/DIT Media Manager.app"

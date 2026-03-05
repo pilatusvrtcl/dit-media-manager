@@ -124,3 +124,13 @@ Set this in `settings.json` for launcher updates:
 - Uses system `rsync`; interrupted transfers resume using partial data flags.
 - Destination structure is namespaced per source (`<destination_root>/<source name>/...`) to avoid collisions.
 - Building a working GUI `.app` requires Python with Tk support. If Homebrew Python lacks Tk, install Python from python.org and run `./build_app.sh` again.
+
+## Custom Icons
+
+Optional icon files:
+
+- `assets/app_icon.icns` → used for `DIT Media Manager.app` bundle icon
+- `assets/launcher_icon.icns` → used for `DIT Media Launcher.app` bundle icon
+- `assets/app_icon.png` → used for runtime window icon in the manager UI
+
+If these files are missing, builds still work and default icons are used.
