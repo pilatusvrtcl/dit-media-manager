@@ -56,13 +56,27 @@ def get_user_config_file() -> Path:
     return USER_CONFIG_FILE
 
 
-def save_source_ip_overrides(config: AppConfig, ip_by_source: dict[str, str]) -> Path:
+def save_user_overrides(
+    config: AppConfig,
+    ip_by_source: dict[str, str],
+    mount_by_source: dict[str, str],
+    destination_root: str,
+) -> Path:
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    existing_payload: dict = {}
+    if USER_CONFIG_FILE.exists():
+        try:
+            with USER_CONFIG_FILE.open("r", encoding="utf-8") as handle:
+                existing_payload = json.load(handle)
+        except Exception:
+            existing_payload = {}
+
     payload = {
+        "destination_root": destination_root,
         "sources": [
             {
                 "name": source.name,
-                "mount_path": str(source.mount_path),
+                "mount_path": mount_by_source.get(source.name, str(source.mount_path)),
                 "type": source.source_type,
                 "subfolder": source.subfolder,
                 "ip_address": ip_by_source.get(source.name, source.ip_address),
@@ -70,9 +84,21 @@ def save_source_ip_overrides(config: AppConfig, ip_by_source: dict[str, str]) ->
             for source in config.sources
         ]
     }
+
+    merged_payload = _deep_merge(existing_payload, payload)
     with USER_CONFIG_FILE.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
+        json.dump(merged_payload, handle, indent=2)
     return USER_CONFIG_FILE
+
+
+def save_source_ip_overrides(config: AppConfig, ip_by_source: dict[str, str]) -> Path:
+    mount_by_source = {source.name: str(source.mount_path) for source in config.sources}
+    return save_user_overrides(
+        config,
+        ip_by_source=ip_by_source,
+        mount_by_source=mount_by_source,
+        destination_root=str(config.destination_root),
+    )
 
 
 def hash_file(path: Path, algorithm: str = "md5", chunk_size: int = 2 * 1024 * 1024) -> str:

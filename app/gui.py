@@ -5,11 +5,12 @@ import threading
 import time
 import tkinter as tk
 import tkinter.messagebox as mbox
+from pathlib import Path
 from tkinter import ttk
 
 from .models import AppConfig, FileResult, format_size
 from .sync_engine import SyncEngine, build_summary_text
-from .utils import get_user_config_file, is_host_reachable, is_mount_available, resource_path, save_source_ip_overrides
+from .utils import get_user_config_file, is_host_reachable, is_mount_available, resource_path, save_user_overrides
 from .version import __version__
 
 
@@ -77,6 +78,8 @@ class AppGUI:
         self.status_labels: dict[str, tk.StringVar] = {}
         self.last_seen_labels: dict[str, tk.StringVar] = {}
         self.ip_vars: dict[str, tk.StringVar] = {}
+        self.mount_vars: dict[str, tk.StringVar] = {}
+        self.destination_var = tk.StringVar(value=str(config.destination_root))
         self.rows: list[FileResult] = []
         self.event_queue: queue.Queue[tuple[str, object]] = queue.Queue()
 
@@ -210,12 +213,12 @@ class AppGUI:
 
         ttk.Label(controls, textvariable=self.summary_var, style="Summary.TLabel").pack(side=tk.RIGHT)
 
-        destination_label = ttk.Label(
+        self.destination_label = ttk.Label(
             parent,
             text=f"Destination: {self.config.destination_root}",
             style="Info.TLabel",
         )
-        destination_label.pack(anchor=tk.W, pady=(8, 10))
+        self.destination_label.pack(anchor=tk.W, pady=(8, 10))
 
         status_card = RoundedCard(parent, card_color="#1A1A1A", radius=24, padding=14)
         status_card.pack(fill=tk.X, pady=(0, 10))
@@ -275,22 +278,45 @@ class AppGUI:
         frame = ttk.Frame(parent, style="App.TFrame", padding=(0, 4, 0, 0))
         frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(frame, text="Device IP Configuration", style="ConfigHeader.TLabel").pack(anchor=tk.W, pady=(0, 6))
+        ttk.Label(frame, text="Device & Path Configuration", style="ConfigHeader.TLabel").pack(anchor=tk.W, pady=(0, 6))
         ttk.Label(
             frame,
             text="These values are saved in your user profile and persist across app updates.",
             style="ConfigHint.TLabel",
         ).pack(anchor=tk.W, pady=(0, 12))
 
+        destination_frame = ttk.Frame(frame, style="App.TFrame")
+        destination_frame.pack(fill=tk.X, pady=(0, 12))
+        ttk.Label(destination_frame, text="Destination Path", style="Info.TLabel").pack(anchor=tk.W)
+        tk.Entry(
+            destination_frame,
+            textvariable=self.destination_var,
+            bg="#111111",
+            fg="#FFFFFF",
+            insertbackground="#FFCC33",
+            highlightthickness=1,
+            highlightbackground="#2C2C2C",
+            highlightcolor="#FFCC33",
+            relief="flat",
+            bd=0,
+            width=80,
+            font=("SF Pro", 11),
+        ).pack(fill=tk.X, pady=(4, 0))
+
         card = RoundedCard(frame, card_color="#1A1A1A", radius=24, padding=14)
         card.pack(fill=tk.X)
         body = card.inner
 
+        ttk.Label(body, text="Device", style="DashHeader.TLabel").grid(row=0, column=0, sticky=tk.W, padx=(0, 12), pady=(0, 8))
+        ttk.Label(body, text="IP Address", style="DashHeader.TLabel").grid(row=0, column=1, sticky=tk.W, padx=(0, 12), pady=(0, 8))
+        ttk.Label(body, text="Mount Path", style="DashHeader.TLabel").grid(row=0, column=2, sticky=tk.W, pady=(0, 8))
+
         for index, source in enumerate(self.config.sources):
-            ttk.Label(body, text=source.name, style="DashValue.TLabel").grid(row=index, column=0, sticky=tk.W, padx=(0, 12), pady=6)
+            row = index + 1
+            ttk.Label(body, text=source.name, style="DashValue.TLabel").grid(row=row, column=0, sticky=tk.W, padx=(0, 12), pady=6)
             ip_var = tk.StringVar(value=source.ip_address)
             self.ip_vars[source.name] = ip_var
-            entry = tk.Entry(
+            ip_entry = tk.Entry(
                 body,
                 textvariable=ip_var,
                 bg="#111111",
@@ -301,18 +327,36 @@ class AppGUI:
                 highlightcolor="#FFCC33",
                 relief="flat",
                 bd=0,
-                width=30,
+                width=20,
                 font=("SF Pro", 11),
             )
-            entry.grid(row=index, column=1, sticky=tk.W, pady=6)
+            ip_entry.grid(row=row, column=1, sticky=tk.W, padx=(0, 12), pady=6)
+
+            mount_var = tk.StringVar(value=str(source.mount_path))
+            self.mount_vars[source.name] = mount_var
+            mount_entry = tk.Entry(
+                body,
+                textvariable=mount_var,
+                bg="#111111",
+                fg="#FFFFFF",
+                insertbackground="#FFCC33",
+                highlightthickness=1,
+                highlightbackground="#2C2C2C",
+                highlightcolor="#FFCC33",
+                relief="flat",
+                bd=0,
+                width=42,
+                font=("SF Pro", 11),
+            )
+            mount_entry.grid(row=row, column=2, sticky=tk.W, pady=6)
 
         actions = ttk.Frame(frame, style="App.TFrame")
         actions.pack(fill=tk.X, pady=(12, 0))
 
         tk.Button(
             actions,
-            text="Save IPs",
-            command=self._save_ip_settings,
+            text="Save Config",
+            command=self._save_user_settings,
             bg="#FFCC33",
             fg="#111111",
             activebackground="#FFD966",
@@ -326,16 +370,30 @@ class AppGUI:
             cursor="hand2",
         ).pack(side=tk.LEFT)
 
-    def _save_ip_settings(self) -> None:
+    def _save_user_settings(self) -> None:
         ip_by_source = {name: var.get().strip() for name, var in self.ip_vars.items()}
-        saved_path = save_source_ip_overrides(self.config, ip_by_source)
+        mount_by_source = {name: var.get().strip() for name, var in self.mount_vars.items()}
+        destination_root = self.destination_var.get().strip()
+
+        if not destination_root:
+            mbox.showerror("Invalid Configuration", "Destination path cannot be empty.")
+            return
+
+        if any(not mount_path for mount_path in mount_by_source.values()):
+            mbox.showerror("Invalid Configuration", "Mount path cannot be empty for any device.")
+            return
+
+        saved_path = save_user_overrides(self.config, ip_by_source, mount_by_source, destination_root)
 
         for source in self.config.sources:
             source.ip_address = ip_by_source.get(source.name, source.ip_address)
+            source.mount_path = Path(mount_by_source.get(source.name, str(source.mount_path)))
+        self.config.destination_root = Path(destination_root)
+        self.destination_label.configure(text=f"Destination: {self.config.destination_root}")
 
         mbox.showinfo(
             "Config Saved",
-            f"IP settings saved to:\n{saved_path}\n\nThey will persist across newer app versions.",
+            f"Configuration saved to:\n{saved_path}\n\nIt will persist across newer app versions.",
         )
 
     def _refresh_connectivity(self) -> None:
@@ -355,6 +413,22 @@ class AppGUI:
         self.root.after(interval_ms, self._refresh_connectivity)
 
     def _start_sync(self) -> None:
+        offline_sources = []
+        for source in self.config.sources:
+            mount_online = is_mount_available(source.effective_root)
+            host_online = is_host_reachable(source.ip_address) if source.ip_address else False
+            if not mount_online and not host_online:
+                offline_sources.append(source.name)
+
+        if offline_sources:
+            mbox.showwarning(
+                "Devices Not Responding",
+                "Sync was stopped because these devices are offline:\n\n"
+                + "\n".join(f"- {name}" for name in offline_sources)
+                + "\n\nCheck network/mounts in Config and try again.",
+            )
+            return
+
         self.start_btn.config(state=tk.DISABLED, bg="#666666", cursor="arrow")
         self.last24_toggle.state(["disabled"])
         if not self.progress_visible:
