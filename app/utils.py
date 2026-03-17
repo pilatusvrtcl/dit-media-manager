@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -227,9 +228,17 @@ def try_mount_smb_destination(config: AppConfig) -> Path | None:
 
     username = destination.username or "guest"
     password = destination.password or ""
-    mount_point = destination.mount_path
-    if str(mount_point).strip() == "":
-        mount_point = Path.home() / "Library" / "Caches" / "DIT Media Manager" / "mounts" / "destination"
+    configured_mount = destination.mount_path
+    fallback_mount = Path.home() / "Library" / "Caches" / "DIT Media Manager" / "mounts" / "destination"
+    volume_mount = Path("/Volumes") / share
+
+    mount_candidates: list[Path] = []
+    if str(configured_mount).strip() != "":
+        mount_candidates.append(configured_mount)
+    if volume_mount not in mount_candidates:
+        mount_candidates.append(volume_mount)
+    if fallback_mount not in mount_candidates:
+        mount_candidates.append(fallback_mount)
 
     userinfo = quote(username, safe="")
     if password:
@@ -238,32 +247,30 @@ def try_mount_smb_destination(config: AppConfig) -> Path | None:
         userinfo = f"{userinfo}:"
     smb_url = f"//{userinfo}@{host}/{share}"
 
-    try:
-        mount_point.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        return None
-
-    if os.path.ismount(mount_point) and is_mount_available(mount_point):
-        return mount_point
-
-    volume_mount = Path("/Volumes") / share
-    if os.path.ismount(volume_mount) and is_mount_available(volume_mount):
-        return volume_mount
-
-    proc = subprocess.run(
-        ["mount_smbfs", smb_url, str(mount_point)],
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
+    for mount_point in mount_candidates:
         if os.path.ismount(mount_point) and is_mount_available(mount_point):
             return mount_point
-        if os.path.ismount(volume_mount) and is_mount_available(volume_mount):
-            return volume_mount
-        return None
 
-    if is_mount_available(mount_point):
-        return mount_point
-    if os.path.ismount(volume_mount) and is_mount_available(volume_mount):
-        return volume_mount
+    mount_binary = shutil.which("mount_smbfs") or "/sbin/mount_smbfs"
+
+    for mount_point in mount_candidates:
+        try:
+            mount_point.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+
+        try:
+            proc = subprocess.run(
+                [mount_binary, smb_url, str(mount_point)],
+                capture_output=True,
+                text=True,
+            )
+        except OSError:
+            continue
+
+        if proc.returncode == 0 and is_mount_available(mount_point):
+            return mount_point
+        if os.path.ismount(mount_point) and is_mount_available(mount_point):
+            return mount_point
+
     return None
