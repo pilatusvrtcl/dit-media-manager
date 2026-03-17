@@ -9,7 +9,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from .models import AppConfig, FileResult, format_size
-from .sync_engine import ImportAlreadyExistsError, SyncEngine, build_summary_text
+from .sync_engine import DestinationUnavailableError, ImportAlreadyExistsError, SyncEngine, build_summary_text
 from .utils import get_user_config_file, is_host_reachable, is_mount_available, resource_path, save_user_overrides
 from .version import __version__
 
@@ -476,8 +476,14 @@ class AppGUI:
                 force_overwrite=self.overrule_var.get(),
                 one_file_only=self.one_file_var.get(),
             )
+        except DestinationUnavailableError as exc:
+            self.event_queue.put(("destination_error", str(exc)))
+            return
         except ImportAlreadyExistsError as exc:
             self.event_queue.put(("blocked", str(exc)))
+            return
+        except Exception as exc:
+            self.event_queue.put(("error", str(exc)))
             return
         self.event_queue.put(("done", report))
 
@@ -517,6 +523,30 @@ class AppGUI:
                     self.progress.pack_forget()
                     self.progress_visible = False
                 mbox.showwarning("Already Imported", message)
+            elif event_type == "destination_error":
+                message = str(payload)
+                self.summary_var.set("Sync failed: destination unavailable")
+                self.start_btn.config(state=tk.NORMAL, bg="#FFCC33", cursor="hand2")
+                self.last24_toggle.state(["!disabled"])
+                self.overrule_toggle.state(["!disabled"])
+                self.one_file_toggle.state(["!disabled"])
+                self.progress.stop()
+                if self.progress_visible:
+                    self.progress.pack_forget()
+                    self.progress_visible = False
+                mbox.showerror("Destination Unavailable", message)
+            elif event_type == "error":
+                message = str(payload)
+                self.summary_var.set("Sync failed: unexpected error")
+                self.start_btn.config(state=tk.NORMAL, bg="#FFCC33", cursor="hand2")
+                self.last24_toggle.state(["!disabled"])
+                self.overrule_toggle.state(["!disabled"])
+                self.one_file_toggle.state(["!disabled"])
+                self.progress.stop()
+                if self.progress_visible:
+                    self.progress.pack_forget()
+                    self.progress_visible = False
+                mbox.showerror("Sync Error", message)
 
         self.root.after(150, self._drain_events)
 

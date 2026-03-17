@@ -30,6 +30,10 @@ class ImportAlreadyExistsError(RuntimeError):
     pass
 
 
+class DestinationUnavailableError(RuntimeError):
+    pass
+
+
 class SyncEngine:
     def __init__(
         self,
@@ -53,11 +57,15 @@ class SyncEngine:
         report = SyncReport(rows=[], summary=SyncSummary())
 
         mounted_destination = try_mount_smb_destination(self.config)
+        if self.config.destination_smb is not None and mounted_destination is None:
+            raise DestinationUnavailableError(
+                "Destination SMB is not available or could not be mounted. "
+                "Check destination network/mount settings and try again."
+            )
+
         if mounted_destination:
             destination_root_text = str(self.config.destination_root)
-            if destination_root_text.startswith(str(mounted_destination)):
-                pass
-            else:
+            if not destination_root_text.startswith(str(mounted_destination)):
                 self.config.destination_root = mounted_destination
 
         already_imported_recording = self.find_already_imported_recording_name()
@@ -69,7 +77,12 @@ class SyncEngine:
 
         pull_folder = datetime.now().strftime("%Y-%m-%d_%H-%M")
         run_destination_root = self.config.destination_root / pull_folder
-        run_destination_root.mkdir(parents=True, exist_ok=True)
+        try:
+            run_destination_root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise DestinationUnavailableError(
+                f"Unable to create destination folder: {run_destination_root}\n{exc}"
+            ) from exc
 
         with ThreadPoolExecutor(max_workers=len(self.config.sources)) as pool:
             futures = [
