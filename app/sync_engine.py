@@ -76,7 +76,8 @@ class SyncEngine:
             )
 
         pull_folder = datetime.now().strftime("%Y-%m-%d_%H-%M")
-        run_destination_root = self.config.destination_root / pull_folder
+        destination_base = self._resolve_destination_base()
+        run_destination_root = destination_base / pull_folder
         self._ensure_destination_folder(run_destination_root)
 
         with ThreadPoolExecutor(max_workers=len(self.config.sources)) as pool:
@@ -360,56 +361,54 @@ class SyncEngine:
                         if not destination_root_text.startswith(str(mounted_destination)):
                             self.config.destination_root = mounted_destination
                         # Rebuild target path after remount and retry once.
-                        run_destination_root = self.config.destination_root / run_destination_root.name
-                        fallback_root = self._resolve_writable_subdir(self.config.destination_root)
-                        if fallback_root is not None:
-                            self.config.destination_root = fallback_root
-                            run_destination_root = self.config.destination_root / run_destination_root.name
+                        run_destination_root = self._resolve_destination_base() / run_destination_root.name
                         continue
                 details = self._destination_diagnostics(run_destination_root.parent)
                 raise DestinationUnavailableError(
                     f"Unable to create destination folder: {run_destination_root}\n{exc}\n{details}"
                 ) from exc
 
-    def _resolve_writable_subdir(self, destination_root: Path) -> Path | None:
-        if not destination_root.exists() or not destination_root.is_dir():
-            return None
-        if os.access(destination_root, os.W_OK):
-            return None
-
-        preferred_names = {
-            "incoming",
-            "ingest",
-            "uploads",
-            "imports",
-            "dit",
-            "dit_uploads",
-        }
-
-        candidates: list[Path] = []
+    def _resolve_destination_base(self) -> Path:
+        candidates = [self.config.destination_root]
         try:
-            entries = [entry for entry in destination_root.iterdir() if entry.is_dir() and not entry.name.startswith(".")]
+            children = [
+                entry
+                for entry in self.config.destination_root.iterdir()
+                if entry.is_dir() and not entry.name.startswith(".")
+            ]
+            children.sort(key=self._safe_mtime, reverse=True)
+            candidates.extend(children)
         except OSError:
-            return None
-
-        preferred = [entry for entry in entries if entry.name.lower() in preferred_names]
-        preferred.sort(key=self._safe_mtime, reverse=True)
-        candidates.extend(preferred)
-
-        remaining = [entry for entry in entries if entry not in preferred]
-        remaining.sort(key=self._safe_mtime, reverse=True)
-        candidates.extend(remaining)
+            pass
 
         for candidate in candidates:
-            if os.access(candidate, os.W_OK):
+            if self._can_create_probe(candidate):
+                if candidate != self.config.destination_root:
+                    self.config.destination_root = candidate
                 return candidate
-        return None
+
+        details = self._destination_diagnostics(self.config.destination_root)
+        raise DestinationUnavailableError(
+            "No writable destination base path found on mounted remote storage.\n"
+            f"Configured destination: {self.config.destination_root}\n{details}"
+        )
 
     def _safe_mtime(self, path: Path) -> float:
         try:
             return path.stat().st_mtime
         except OSError:
             return 0.0
+
+    def _can_create_probe(self, base_path: Path) -> bool:
+        if not base_path.exists() or not base_path.is_dir():
+            return False
+        probe_path = base_path / f".dit_write_probe_{os.getpid()}"
+        try:
+            probe_path.mkdir(parents=False, exist_ok=False)
+            probe_path.rmdir()
+            return True
+        except OSError:
+            return False
 
     def _destination_diagnostics(self, destination_base: Path) -> str:
         exists = destination_base.exists()
