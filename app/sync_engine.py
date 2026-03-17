@@ -77,12 +77,7 @@ class SyncEngine:
 
         pull_folder = datetime.now().strftime("%Y-%m-%d_%H-%M")
         run_destination_root = self.config.destination_root / pull_folder
-        try:
-            run_destination_root.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise DestinationUnavailableError(
-                f"Unable to create destination folder: {run_destination_root}\n{exc}"
-            ) from exc
+        self._ensure_destination_folder(run_destination_root)
 
         with ThreadPoolExecutor(max_workers=len(self.config.sources)) as pool:
             futures = [
@@ -351,6 +346,36 @@ class SyncEngine:
                 return False
             self._single_file_reserved = True
             return True
+
+    def _ensure_destination_folder(self, run_destination_root: Path) -> None:
+        for attempt in range(2):
+            try:
+                run_destination_root.mkdir(parents=True, exist_ok=True)
+                return
+            except OSError as exc:
+                if attempt == 0 and self.config.destination_smb is not None:
+                    mounted_destination = try_mount_smb_destination(self.config)
+                    if mounted_destination:
+                        destination_root_text = str(self.config.destination_root)
+                        if not destination_root_text.startswith(str(mounted_destination)):
+                            self.config.destination_root = mounted_destination
+                        # Rebuild target path after remount and retry once.
+                        run_destination_root = self.config.destination_root / run_destination_root.name
+                        continue
+                details = self._destination_diagnostics(run_destination_root.parent)
+                raise DestinationUnavailableError(
+                    f"Unable to create destination folder: {run_destination_root}\n{exc}\n{details}"
+                ) from exc
+
+    def _destination_diagnostics(self, destination_base: Path) -> str:
+        exists = destination_base.exists()
+        is_dir = destination_base.is_dir() if exists else False
+        is_mount = os.path.ismount(destination_base) if exists else False
+        writable = os.access(destination_base, os.W_OK) if exists else False
+        return (
+            "Destination diagnostics: "
+            f"exists={exists}, is_dir={is_dir}, is_mount={is_mount}, writable={writable}"
+        )
 
     def _should_skip_dir_name(self, name: str) -> bool:
         return name.lower() in SKIP_DIR_NAMES
