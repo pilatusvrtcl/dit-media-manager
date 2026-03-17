@@ -361,11 +361,55 @@ class SyncEngine:
                             self.config.destination_root = mounted_destination
                         # Rebuild target path after remount and retry once.
                         run_destination_root = self.config.destination_root / run_destination_root.name
+                        fallback_root = self._resolve_writable_subdir(self.config.destination_root)
+                        if fallback_root is not None:
+                            self.config.destination_root = fallback_root
+                            run_destination_root = self.config.destination_root / run_destination_root.name
                         continue
                 details = self._destination_diagnostics(run_destination_root.parent)
                 raise DestinationUnavailableError(
                     f"Unable to create destination folder: {run_destination_root}\n{exc}\n{details}"
                 ) from exc
+
+    def _resolve_writable_subdir(self, destination_root: Path) -> Path | None:
+        if not destination_root.exists() or not destination_root.is_dir():
+            return None
+        if os.access(destination_root, os.W_OK):
+            return None
+
+        preferred_names = {
+            "incoming",
+            "ingest",
+            "uploads",
+            "imports",
+            "dit",
+            "dit_uploads",
+        }
+
+        candidates: list[Path] = []
+        try:
+            entries = [entry for entry in destination_root.iterdir() if entry.is_dir() and not entry.name.startswith(".")]
+        except OSError:
+            return None
+
+        preferred = [entry for entry in entries if entry.name.lower() in preferred_names]
+        preferred.sort(key=self._safe_mtime, reverse=True)
+        candidates.extend(preferred)
+
+        remaining = [entry for entry in entries if entry not in preferred]
+        remaining.sort(key=self._safe_mtime, reverse=True)
+        candidates.extend(remaining)
+
+        for candidate in candidates:
+            if os.access(candidate, os.W_OK):
+                return candidate
+        return None
+
+    def _safe_mtime(self, path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
 
     def _destination_diagnostics(self, destination_base: Path) -> str:
         exists = destination_base.exists()
