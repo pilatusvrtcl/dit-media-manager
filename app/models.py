@@ -12,6 +12,9 @@ class SourceConfig:
     source_type: str
     ip_address: str = ""
     subfolder: str = ""
+    smb_share: str = ""
+    smb_username: str = "guest"
+    smb_password: str = ""
 
     @property
     def effective_root(self) -> Path:
@@ -41,7 +44,17 @@ class AppConfig:
     sources: list[SourceConfig]
     sync_options: SyncOptions
     rsync: RsyncConfig
+    destination_smb: "DestinationSmbConfig | None" = None
     ui_refresh_seconds: float = 2.0
+
+
+@dataclass
+class DestinationSmbConfig:
+    host: str
+    share: str
+    username: str = ""
+    password: str = ""
+    mount_path: Path = Path("")
 
 
 @dataclass
@@ -86,12 +99,27 @@ def parse_config(raw: dict[str, Any]) -> AppConfig:
             source_type=entry.get("type", "camera"),
             ip_address=entry.get("ip_address", ""),
             subfolder=entry.get("subfolder", ""),
+            smb_share=entry.get("smb_share", ""),
+            smb_username=entry.get("smb_username", "guest"),
+            smb_password=entry.get("smb_password", ""),
         )
         for entry in raw["sources"]
     ]
     sync_section = raw.get("sync", {})
     rsync_section = raw.get("rsync", {})
+    destination_smb_section = raw.get("destination_smb", {})
     ui_section = raw.get("ui", {})
+
+    destination_smb: DestinationSmbConfig | None = None
+    if destination_smb_section.get("host") and destination_smb_section.get("share"):
+        destination_smb = DestinationSmbConfig(
+            host=str(destination_smb_section.get("host", "")),
+            share=str(destination_smb_section.get("share", "")),
+            username=str(destination_smb_section.get("username", "")),
+            password=str(destination_smb_section.get("password", "")),
+            mount_path=Path(destination_smb_section.get("mount_path", "")),
+        )
+
     return AppConfig(
         destination_root=Path(raw["destination_root"]),
         sources=sources,
@@ -106,5 +134,6 @@ def parse_config(raw: dict[str, Any]) -> AppConfig:
             binary=str(rsync_section.get("binary", "rsync")),
             flags=list(rsync_section.get("flags", ["-a", "--partial", "--inplace"])),
         ),
+        destination_smb=destination_smb,
         ui_refresh_seconds=float(ui_section.get("refresh_seconds", 2.0)),
     )

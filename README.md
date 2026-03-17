@@ -40,6 +40,9 @@ Edit `settings.json`:
 - `destination_root`: local RAID/SSD path
 - `sources[*].ip_address`: camera/ATEM IP for connectivity checks
 - `sources[*].mount_path`: mounted network source paths
+- `sources[*].smb_share` (optional): SMB share name for auto-mount over IP
+- `sources[*].smb_username` (optional, default `guest`): SMB username
+- `sources[*].smb_password` (optional): SMB password
 - `sync.last_24h_default`: initial state of toggle
 - `sync.hash_algorithm`: `md5` or `xxh64`
 - `updates.github_repo`: GitHub repo in `owner/repo` format
@@ -136,6 +139,7 @@ Set this in `settings.json` for launcher updates:
 ## Notes
 
 - Ensure all network mounts are mounted in Finder before sync.
+- If you prefer IP-only operation, set `smb_share` in `settings.json`. The app will try `mount_smbfs` automatically when a source is reachable but not mounted.
 - Uses system `rsync`; interrupted transfers resume using partial data flags.
 - Destination structure is namespaced per source (`<destination_root>/<source name>/...`) to avoid collisions.
 - Building a working GUI `.app` requires Python with Tk support. If Homebrew Python lacks Tk, install Python from python.org and run `./build_app.sh` again.

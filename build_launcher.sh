@@ -10,6 +10,12 @@ fi
 
 source .venv-build/bin/activate
 
+APP_VERSION="$(python - <<'PY'
+from app.version import __version__
+print(__version__)
+PY
+)"
+
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
@@ -42,5 +48,13 @@ fi
 
 PYI_CMD+=(app/launcher.py)
 "${PYI_CMD[@]}"
+
+APP_PLIST="dist/DIT Media Launcher.app/Contents/Info.plist"
+if [[ -f "$APP_PLIST" ]]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$APP_PLIST" >/dev/null 2>&1 \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $APP_VERSION" "$APP_PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_VERSION" "$APP_PLIST" >/dev/null 2>&1 \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $APP_VERSION" "$APP_PLIST"
+fi
 
 echo "Build complete: dist/DIT Media Launcher.app"

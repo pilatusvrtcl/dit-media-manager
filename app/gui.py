@@ -9,7 +9,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from .models import AppConfig, FileResult, format_size
-from .sync_engine import SyncEngine, build_summary_text
+from .sync_engine import ImportAlreadyExistsError, SyncEngine, build_summary_text
 from .utils import get_user_config_file, is_host_reachable, is_mount_available, resource_path, save_user_overrides
 from .version import __version__
 
@@ -84,6 +84,8 @@ class AppGUI:
         self.event_queue: queue.Queue[tuple[str, object]] = queue.Queue()
 
         self.last_24h_var = tk.BooleanVar(value=config.sync_options.last_24h_only)
+        self.overrule_var = tk.BooleanVar(value=False)
+        self.one_file_var = tk.BooleanVar(value=False)
         self.summary_var = tk.StringVar(value="Total Data: 0B | New Files: 0 | Time Elapsed: 0m 00s")
         self._row_insert_count = 0
 
@@ -189,6 +191,20 @@ class AppGUI:
             variable=self.last_24h_var,
         )
         self.last24_toggle.pack(side=tk.LEFT)
+
+        self.overrule_toggle = ttk.Checkbutton(
+            controls,
+            text="Overrule Already Imported",
+            variable=self.overrule_var,
+        )
+        self.overrule_toggle.pack(side=tk.LEFT, padx=(10, 0))
+
+        self.one_file_toggle = ttk.Checkbutton(
+            controls,
+            text="One File Test Pull",
+            variable=self.one_file_var,
+        )
+        self.one_file_toggle.pack(side=tk.LEFT, padx=(10, 0))
 
         self.start_btn = tk.Button(
             controls,
@@ -431,6 +447,8 @@ class AppGUI:
 
         self.start_btn.config(state=tk.DISABLED, bg="#666666", cursor="arrow")
         self.last24_toggle.state(["disabled"])
+        self.overrule_toggle.state(["disabled"])
+        self.one_file_toggle.state(["disabled"])
         if not self.progress_visible:
             self.progress.pack(side=tk.LEFT, padx=(14, 0))
             self.progress_visible = True
@@ -452,7 +470,15 @@ class AppGUI:
             on_source_status=lambda source, status: self.event_queue.put(("source_status", (source, status))),
             on_file_result=lambda row: self.event_queue.put(("file_row", row)),
         )
-        report = engine.run(last_24h_only=self.last_24h_var.get())
+        try:
+            report = engine.run(
+                last_24h_only=self.last_24h_var.get(),
+                force_overwrite=self.overrule_var.get(),
+                one_file_only=self.one_file_var.get(),
+            )
+        except ImportAlreadyExistsError as exc:
+            self.event_queue.put(("blocked", str(exc)))
+            return
         self.event_queue.put(("done", report))
 
     def _drain_events(self) -> None:
@@ -472,11 +498,25 @@ class AppGUI:
                 self.summary_var.set(build_summary_text(report))
                 self.start_btn.config(state=tk.NORMAL, bg="#FFCC33", cursor="hand2")
                 self.last24_toggle.state(["!disabled"])
+                self.overrule_toggle.state(["!disabled"])
+                self.one_file_toggle.state(["!disabled"])
                 self.progress.stop()
                 if self.progress_visible:
                     self.progress.pack_forget()
                     self.progress_visible = False
                 self._open_final_report(report)
+            elif event_type == "blocked":
+                message = str(payload)
+                self.summary_var.set("Sync blocked: already imported")
+                self.start_btn.config(state=tk.NORMAL, bg="#FFCC33", cursor="hand2")
+                self.last24_toggle.state(["!disabled"])
+                self.overrule_toggle.state(["!disabled"])
+                self.one_file_toggle.state(["!disabled"])
+                self.progress.stop()
+                if self.progress_visible:
+                    self.progress.pack_forget()
+                    self.progress_visible = False
+                mbox.showwarning("Already Imported", message)
 
         self.root.after(150, self._drain_events)
 

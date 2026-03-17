@@ -4,12 +4,14 @@ import hashlib
 import json
 import os
 import socket
+import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
-from .models import AppConfig, parse_config
+from .models import AppConfig, DestinationSmbConfig, SourceConfig, parse_config
 
 
 USER_CONFIG_DIR = Path.home() / "Library" / "Application Support" / "DIT Media Manager"
@@ -157,3 +159,111 @@ def is_file_active(path: Path, probe_seconds: float, min_age_seconds: float) -> 
         return True
 
     return initial.st_size != later.st_size or int(initial.st_mtime) != int(later.st_mtime)
+
+
+def _safe_mount_dir_name(name: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() else "_" for ch in name.strip())
+    return cleaned or "source"
+
+
+def try_mount_smb_source(source: SourceConfig) -> Path | None:
+    """Attempt to mount an SMB share for a source using its IP + smb_share fields."""
+    if not source.ip_address or not source.smb_share:
+        return None
+
+    username = source.smb_username or "guest"
+    password = source.smb_password or ""
+
+    # mount_smbfs expects //user:pass@host/share syntax.
+    userinfo = quote(username, safe="")
+    if password:
+        userinfo = f"{userinfo}:{quote(password, safe='')}"
+    else:
+        userinfo = f"{userinfo}:"
+
+    smb_url = f"//{userinfo}@{source.ip_address}/{source.smb_share}"
+
+    candidates = [source.mount_path]
+    fallback = Path.home() / "Library" / "Caches" / "DIT Media Manager" / "mounts" / _safe_mount_dir_name(source.name)
+    if fallback not in candidates:
+        candidates.append(fallback)
+
+    for mount_point in candidates:
+        mounted_root = mount_point / source.subfolder if source.subfolder else mount_point
+        # Reuse an existing mount instead of failing on "File exists".
+        if os.path.ismount(mount_point) and is_mount_available(mounted_root):
+            return mounted_root
+
+        try:
+            mount_point.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+
+        proc = subprocess.run(
+            ["mount_smbfs", smb_url, str(mount_point)],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            if os.path.ismount(mount_point) and is_mount_available(mounted_root):
+                return mounted_root
+            continue
+
+        if is_mount_available(mounted_root):
+            return mounted_root
+
+    return None
+
+
+def try_mount_smb_destination(config: AppConfig) -> Path | None:
+    destination = config.destination_smb
+    if destination is None:
+        return None
+
+    host = destination.host.strip()
+    share = destination.share.strip()
+    if not host or not share:
+        return None
+
+    username = destination.username or "guest"
+    password = destination.password or ""
+    mount_point = destination.mount_path
+    if str(mount_point).strip() == "":
+        mount_point = Path.home() / "Library" / "Caches" / "DIT Media Manager" / "mounts" / "destination"
+
+    userinfo = quote(username, safe="")
+    if password:
+        userinfo = f"{userinfo}:{quote(password, safe='')}"
+    else:
+        userinfo = f"{userinfo}:"
+    smb_url = f"//{userinfo}@{host}/{share}"
+
+    try:
+        mount_point.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+
+    if os.path.ismount(mount_point) and is_mount_available(mount_point):
+        return mount_point
+
+    volume_mount = Path("/Volumes") / share
+    if os.path.ismount(volume_mount) and is_mount_available(volume_mount):
+        return volume_mount
+
+    proc = subprocess.run(
+        ["mount_smbfs", smb_url, str(mount_point)],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        if os.path.ismount(mount_point) and is_mount_available(mount_point):
+            return mount_point
+        if os.path.ismount(volume_mount) and is_mount_available(volume_mount):
+            return volume_mount
+        return None
+
+    if is_mount_available(mount_point):
+        return mount_point
+    if os.path.ismount(volume_mount) and is_mount_available(volume_mount):
+        return volume_mount
+    return None

@@ -5,14 +5,29 @@ import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 from .models import AppConfig, FileResult, SyncReport, SyncSummary, format_size
-from .utils import hash_file, is_file_active, is_mount_available
+from .utils import hash_file, is_file_active, is_mount_available, try_mount_smb_destination, try_mount_smb_source
 
 StatusCallback = Callable[[str, str], None]
 ResultCallback = Callable[[FileResult], None]
+
+SKIP_FILE_NAMES = {
+    ".ds_store",
+    "rootca.crt",
+    "magician launcher.exe",
+}
+
+SKIP_DIR_NAMES = {
+    "magician launcher.app",
+}
+
+
+class ImportAlreadyExistsError(RuntimeError):
+    pass
 
 
 class SyncEngine:
@@ -26,15 +41,46 @@ class SyncEngine:
         self.on_source_status = on_source_status
         self.on_file_result = on_file_result
         self._lock = threading.Lock()
+        self._single_file_reserved = False
 
-    def run(self, last_24h_only: bool) -> SyncReport:
+    def run(
+        self,
+        last_24h_only: bool,
+        force_overwrite: bool = False,
+        one_file_only: bool = False,
+    ) -> SyncReport:
         started = time.time()
         report = SyncReport(rows=[], summary=SyncSummary())
-        self.config.destination_root.mkdir(parents=True, exist_ok=True)
+
+        mounted_destination = try_mount_smb_destination(self.config)
+        if mounted_destination:
+            destination_root_text = str(self.config.destination_root)
+            if destination_root_text.startswith(str(mounted_destination)):
+                pass
+            else:
+                self.config.destination_root = mounted_destination
+
+        already_imported_recording = self.find_already_imported_recording_name()
+        if already_imported_recording and not force_overwrite:
+            raise ImportAlreadyExistsError(
+                f"Recording {already_imported_recording} appears to be already imported for all sources. "
+                "Enable overrule to import again."
+            )
+
+        pull_folder = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        run_destination_root = self.config.destination_root / pull_folder
+        run_destination_root.mkdir(parents=True, exist_ok=True)
 
         with ThreadPoolExecutor(max_workers=len(self.config.sources)) as pool:
             futures = [
-                pool.submit(self._sync_source, source, last_24h_only, report)
+                pool.submit(
+                    self._sync_source,
+                    source,
+                    last_24h_only,
+                    report,
+                    run_destination_root,
+                    one_file_only,
+                )
                 for source in self.config.sources
             ]
             for future in futures:
@@ -56,20 +102,38 @@ class SyncEngine:
             report.rows.append(row)
             self._emit_row(row)
 
-    def _sync_source(self, source, last_24h_only: bool, report: SyncReport) -> None:
+    def _sync_source(
+        self,
+        source,
+        last_24h_only: bool,
+        report: SyncReport,
+        run_destination_root: Path,
+        one_file_only: bool,
+    ) -> None:
         root = source.effective_root
-        source_dest_root = self.config.destination_root / source.name
+        source_dest_root = run_destination_root / source.name
 
         if not is_mount_available(root):
-            self._emit_status(source.name, "Offline")
-            return
+            self._emit_status(source.name, "Mounting")
+            mounted_root = try_mount_smb_source(source)
+            if mounted_root:
+                root = mounted_root
+                self._emit_status(source.name, "Mounted")
+            else:
+                self._emit_status(source.name, "Offline")
+                return
 
         self._emit_status(source.name, "Scanning")
         threshold = time.time() - (24 * 60 * 60)
 
-        for dirpath, _, filenames in os.walk(root):
+        for dirpath, dirnames, filenames in os.walk(root):
+            # Prune ignored directories so os.walk does not descend into them.
+            dirnames[:] = [d for d in dirnames if not self._should_skip_dir_name(d)]
             base_dir = Path(dirpath)
             for filename in filenames:
+                if self._should_skip_file_name(filename):
+                    continue
+
                 source_file = base_dir / filename
                 rel_path = source_file.relative_to(root)
                 destination_file = source_dest_root / rel_path
@@ -112,6 +176,23 @@ class SyncEngine:
                         ),
                     )
                     continue
+
+                if self._already_imported_for_source(source.name, rel_path, source_size):
+                    self._add_row(
+                        report,
+                        FileResult(
+                            file_name=str(rel_path),
+                            source=source.name,
+                            size_bytes=source_size,
+                            status="Skipped",
+                            detail="Already imported (previous pull)",
+                        ),
+                    )
+                    continue
+
+                if one_file_only and not self._reserve_single_file_slot():
+                    self._emit_status(source.name, "Idle")
+                    return
 
                 destination_file.parent.mkdir(parents=True, exist_ok=True)
                 self._emit_status(source.name, f"Copying {rel_path.name}")
@@ -157,7 +238,116 @@ class SyncEngine:
                         ),
                     )
 
+                if one_file_only:
+                    self._emit_status(source.name, "Idle")
+                    return
+
         self._emit_status(source.name, "Idle")
+
+    def find_already_imported_recording_name(self) -> str | None:
+        atem_source = next((s for s in self.config.sources if s.source_type == "atem_iso"), None)
+        if atem_source is None:
+            return None
+
+        atem_root = atem_source.effective_root
+        if not is_mount_available(atem_root):
+            mounted_root = try_mount_smb_source(atem_source)
+            if mounted_root:
+                atem_root = mounted_root
+            else:
+                return None
+
+        try:
+            rec_dirs = [
+                item
+                for item in atem_root.iterdir()
+                if item.is_dir() and item.name.startswith("REC_")
+            ]
+        except OSError:
+            return None
+
+        if not rec_dirs:
+            return None
+
+        rec_dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        latest_name = rec_dirs[0].name
+        if self._recording_present_for_all_sources(latest_name):
+            return latest_name
+        return None
+
+    def _recording_present_for_all_sources(self, recording_name: str) -> bool:
+        base = self.config.destination_root
+        for source in self.config.sources:
+            if not self._recording_present_for_source(base, source.name, recording_name):
+                return False
+        return True
+
+    def _recording_present_for_source(self, base: Path, source_name: str, recording_name: str) -> bool:
+        candidate_roots = [base / source_name]
+        try:
+            candidate_roots.extend(
+                item / source_name
+                for item in base.iterdir()
+                if item.is_dir()
+            )
+        except OSError:
+            pass
+
+        for source_root in candidate_roots:
+            if not source_root.exists() or not source_root.is_dir():
+                continue
+
+            if (source_root / recording_name).exists():
+                return True
+
+            try:
+                for entry in source_root.iterdir():
+                    if entry.name.startswith(recording_name):
+                        return True
+            except OSError:
+                continue
+
+        return False
+
+    def _already_imported_for_source(self, source_name: str, rel_path: Path, source_size: int) -> bool:
+        base = self.config.destination_root
+        candidate_roots = [base / source_name]
+        try:
+            candidate_roots.extend(
+                item / source_name
+                for item in base.iterdir()
+                if item.is_dir()
+            )
+        except OSError:
+            pass
+
+        for source_root in candidate_roots:
+            candidate = source_root / rel_path
+            if not candidate.exists() or not candidate.is_file():
+                continue
+            try:
+                if candidate.stat().st_size == source_size:
+                    return True
+            except OSError:
+                continue
+        return False
+
+    def _reserve_single_file_slot(self) -> bool:
+        with self._lock:
+            if self._single_file_reserved:
+                return False
+            self._single_file_reserved = True
+            return True
+
+    def _should_skip_dir_name(self, name: str) -> bool:
+        return name.lower() in SKIP_DIR_NAMES
+
+    def _should_skip_file_name(self, name: str) -> bool:
+        lowered = name.lower()
+        if lowered in SKIP_FILE_NAMES:
+            return True
+        # Skip macOS metadata sidecar files.
+        return name.startswith("._")
 
     def _copy_with_rsync(self, source_file: Path, destination_file: Path) -> bool:
         command = [
