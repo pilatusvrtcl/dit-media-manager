@@ -354,15 +354,17 @@ class SyncEngine:
                 run_destination_root.mkdir(parents=True, exist_ok=True)
                 return
             except OSError as exc:
-                if attempt == 0 and self.config.destination_smb is not None:
-                    mounted_destination = try_mount_smb_destination(self.config)
-                    if mounted_destination:
-                        destination_root_text = str(self.config.destination_root)
-                        if not destination_root_text.startswith(str(mounted_destination)):
-                            self.config.destination_root = mounted_destination
-                        # Rebuild target path after remount and retry once.
-                        run_destination_root = self._resolve_destination_base() / run_destination_root.name
-                        continue
+                if attempt == 0:
+                    if self.config.destination_smb is not None:
+                        mounted_destination = try_mount_smb_destination(self.config)
+                        if mounted_destination:
+                            destination_root_text = str(self.config.destination_root)
+                            if not destination_root_text.startswith(str(mounted_destination)):
+                                self.config.destination_root = mounted_destination
+                    # Even when remount result is inconclusive, try selecting a writable
+                    # destination base from current mounted path and known subdirectories.
+                    run_destination_root = self._resolve_destination_base() / run_destination_root.name
+                    continue
                 details = self._destination_diagnostics(run_destination_root.parent)
                 raise DestinationUnavailableError(
                     f"Unable to create destination folder: {run_destination_root}\n{exc}\n{details}"
